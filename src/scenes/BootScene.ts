@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { SCENES, GAME_WIDTH, GAME_HEIGHT, UI_COLORS } from '../utils/Constants';
 import { AssetGenerator } from '../utils/AssetGenerator';
+import { ItemRegistry } from '../data/ItemRegistry';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -33,11 +34,18 @@ export class BootScene extends Phaser.Scene {
       loadingText.destroy();
     });
 
-    // Load any external assets here in the future
-    // For now, we generate everything procedurally
+    // Load JSON data files
+    this.load.json('items_data', 'assets/data/items.json');
+    this.load.json('crops_data', 'assets/data/crops.json');
   }
 
   create(): void {
+    // Initialize item/crop registry from loaded JSON
+    const itemsData = this.cache.json.get('items_data');
+    const cropsData = this.cache.json.get('crops_data');
+    if (itemsData) ItemRegistry.loadItems(itemsData);
+    if (cropsData) ItemRegistry.loadCrops(cropsData);
+
     // Generate all placeholder assets
     const assetGen = new AssetGenerator(this);
     assetGen.generateAll();

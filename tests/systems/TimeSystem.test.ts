@@ -162,4 +162,40 @@ describe('TimeSystem', () => {
 
     expect(tickCb).toHaveBeenCalledTimes(3);
   });
+
+  describe('time scale', () => {
+    it('should default to 1x time scale', () => {
+      expect(timeSystem.getTimeScale()).toBe(1);
+    });
+
+    it('should speed up time with higher scale', () => {
+      timeSystem.setTimeScale(5);
+      expect(timeSystem.getTimeScale()).toBe(5);
+
+      const msPerMinute = MS_PER_GAME_HOUR / 60;
+      // With 5x scale, feeding 1 minute worth of delta should advance 5 minutes
+      timeSystem.update(msPerMinute);
+      expect(timeSystem.getState().minute).toBe(5);
+    });
+
+    it('should slow down time with fractional scale', () => {
+      timeSystem.setTimeScale(0.5);
+      const msPerMinute = MS_PER_GAME_HOUR / 60;
+      // With 0.5x scale, feeding 2 minutes worth of delta should advance 1 minute
+      timeSystem.update(msPerMinute * 2);
+      expect(timeSystem.getState().minute).toBe(1);
+    });
+
+    it('should not allow negative time scale', () => {
+      timeSystem.setTimeScale(-1);
+      expect(timeSystem.getTimeScale()).toBe(0);
+    });
+
+    it('should pause effectively at 0 scale', () => {
+      timeSystem.setTimeScale(0);
+      const msPerMinute = MS_PER_GAME_HOUR / 60;
+      timeSystem.update(msPerMinute * 100);
+      expect(timeSystem.getState().minute).toBe(0);
+    });
+  });
 });

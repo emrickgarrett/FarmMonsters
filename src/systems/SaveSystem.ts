@@ -70,10 +70,21 @@ export class SaveSystem {
     return info;
   }
 
-  /** Migrate save data from older versions */
+  /** Migrate save data from older versions to current schema. */
   private static migrate(data: SaveData): SaveData {
-    // Future migration logic goes here
-    // For now, just update the version
+    // v1 -> v2: Add chests, shippingBin, expanded FarmTile fields
+    if ((data.version ?? 1) < 2) {
+      (data as any).chests = (data as any).chests ?? {};
+      (data as any).shippingBin = (data as any).shippingBin ?? [];
+      // Ensure FarmTile entries have new fields
+      if (data.farmTiles) {
+        for (const tile of data.farmTiles) {
+          tile.daysGrown = tile.daysGrown ?? 0;
+          tile.seasonPlanted = tile.seasonPlanted ?? undefined;
+        }
+      }
+    }
+
     data.version = SAVE_VERSION;
     return data;
   }

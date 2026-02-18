@@ -1,44 +1,60 @@
 import Phaser from 'phaser';
 import {
   SCENES, TILE_SIZE, SCALE, SCALED_TILE, GAME_WIDTH, GAME_HEIGHT,
-  FARM_WIDTH, FARM_HEIGHT, EVENTS, UI_COLORS,
+  FARM_WIDTH, FARM_HEIGHT, FARM_AREA, EVENTS, UI_COLORS,
+  pixelToGrid, gridToPixel,
 } from '../utils/Constants';
 import { EventBus } from '../utils/EventBus';
 import { Player } from '../entities/Player';
 import { TimeSystem } from '../systems/TimeSystem';
-import { InteractionSystem, Interactable } from '../systems/InteractionSystem';
+import { InteractionSystem } from '../systems/InteractionSystem';
+import { FarmingSystem } from '../systems/FarmingSystem';
+import { InventorySystem } from '../systems/InventorySystem';
+import { ToolSystem } from '../systems/ToolSystem';
 import { SaveSystem } from '../systems/SaveSystem';
-import { SaveData } from '../models/SaveData';
+import { SaveData, FarmTile } from '../models/SaveData';
+import { ItemRegistry } from '../data/ItemRegistry';
 import { DialogBox } from '../ui/DialogBox';
 import { Hotbar } from '../ui/Hotbar';
+import { InventoryUI } from '../ui/InventoryUI';
+import { DebugPanel } from '../ui/DebugPanel';
 
 /** Depth constants: ground is always behind world objects; UI is always on top. */
 const DEPTH = {
-  GROUND: 0,        // flat tiles (grass, dirt, paths, water, fences)
-  // World objects and the player use their Y position as depth (typically 50-1500)
-  DAY_NIGHT: 5000,  // day/night tint overlay
-  HUD_BG: 5100,     // HUD panel backgrounds
-  HUD_TEXT: 5200,    // HUD text
-  HOTBAR: 5300,      // hotbar
-  DIALOG: 5400,      // dialog box
+  GROUND: 0,
+  GROUND_OVERLAY: 1,
+  DAY_NIGHT: 5000,
+  HUD_BG: 5100,
+  HUD_TEXT: 5200,
+  HOTBAR: 5300,
+  DIALOG: 5400,
   NOTIFICATION: 5500,
+  OVERLAY_UI: 5600,
 };
+
+interface FarmTileVisual {
+  tileSprite: Phaser.GameObjects.Image;
+  cropSprite?: Phaser.GameObjects.Image;
+}
 
 export class WorldScene extends Phaser.Scene {
   private player!: Player;
   private timeSystem!: TimeSystem;
   private interactionSystem!: InteractionSystem;
+  private farmingSystem!: FarmingSystem;
+  private inventorySystem!: InventorySystem;
+  private toolSystem!: ToolSystem;
   private dialogBox!: DialogBox;
   private hotbar!: Hotbar;
+  private inventoryUI!: InventoryUI;
+  private debugPanel: DebugPanel | null = null;
   private bus!: EventBus;
   private saveData!: SaveData;
 
   private colliders: Phaser.Physics.Arcade.StaticGroup | null = null;
-
-  /** All game objects that participate in Y-based depth sorting (player + world objects). */
   private depthSortedSprites: Phaser.GameObjects.Image[] = [];
+  private farmTileVisuals: Map<string, FarmTileVisual> = new Map();
 
-  // UI overlays
   private dayNightOverlay!: Phaser.GameObjects.Rectangle;
   private timeText!: Phaser.GameObjects.Text;
   private dateText!: Phaser.GameObjects.Text;
@@ -46,7 +62,6 @@ export class WorldScene extends Phaser.Scene {
   private energyBar!: Phaser.GameObjects.Graphics;
   private interactionPrompt!: Phaser.GameObjects.Text;
 
-  // State
   private currentSlot: number = 0;
 
   constructor() {
@@ -67,9 +82,14 @@ export class WorldScene extends Phaser.Scene {
       year: this.saveData.time.year,
     });
     this.interactionSystem = new InteractionSystem();
+    this.farmingSystem = new FarmingSystem(this.saveData.farmTiles);
+    this.inventorySystem = new InventorySystem(this.saveData.inventory);
+    this.toolSystem = new ToolSystem(this.farmingSystem, this.inventorySystem);
+    this.toolSystem.setEnergy(this.saveData.player.energy, this.saveData.player.maxEnergy);
 
-    // Build the farm map (ground tiles + objects added directly to scene)
+    // Build the farm map
     this.buildFarmMap();
+    this.buildFarmTileOverlays();
 
     // Create player
     this.player = new Player(
@@ -94,234 +114,248 @@ export class WorldScene extends Phaser.Scene {
       0x000000, 0
     ).setScrollFactor(0).setDepth(DEPTH.DAY_NIGHT).setBlendMode(Phaser.BlendModes.MULTIPLY);
 
-    // Create UI elements
     this.createHUD();
 
-    // Hotbar
     this.hotbar = new Hotbar(this);
     this.hotbar.setItems(this.saveData.player.hotbar);
 
-    // Dialog box
     this.dialogBox = new DialogBox(this);
+    this.inventoryUI = new InventoryUI(this, this.inventorySystem);
+    this.inventoryUI.setHotbar(this.hotbar);
 
-    // Setup event listeners
     this.setupEvents();
 
-    // Setup save key
     this.input.keyboard!.on('keydown-ESC', () => this.openPauseMenu());
+    this.input.keyboard!.on('keydown-I', () => this.toggleInventory());
+
+    // Debug panel (dev mode only)
+    if (import.meta.env.DEV) {
+      this.debugPanel = new DebugPanel(
+        this, this.timeSystem, this.farmingSystem,
+        this.inventorySystem, this.toolSystem,
+      );
+    }
   }
+
+  // ─── MAP BUILDING ───────────────────────────────────────
 
   private buildFarmMap(): void {
     this.colliders = this.physics.add.staticGroup();
 
-    const mapWidth = FARM_WIDTH;
-    const mapHeight = FARM_HEIGHT;
-
-    // Ground tiles — all at DEPTH.GROUND, added directly to scene (no container)
-    for (let y = 0; y < mapHeight; y++) {
-      for (let x = 0; x < mapWidth; x++) {
+    for (let y = 0; y < FARM_HEIGHT; y++) {
+      for (let x = 0; x < FARM_WIDTH; x++) {
         const px = x * SCALED_TILE + SCALED_TILE / 2;
         const py = y * SCALED_TILE + SCALED_TILE / 2;
 
         let tileKey = 'tile_grass';
+        if (x >= 8 && x < 24 && y >= 8 && y < 22) tileKey = 'tile_dirt';
+        if ((x === 7 && y >= 8 && y < 22) || (y === 7 && x >= 7 && x < 25)) tileKey = 'tile_path';
+        if (y >= 14 && y <= 16 && x >= 24 && x < FARM_WIDTH) tileKey = 'tile_path';
+        if (x >= 28 && x < 33 && y >= 6 && y < 10) tileKey = 'tile_water';
+        if (x === 0 || y === 0 || x === FARM_WIDTH - 1 || y === FARM_HEIGHT - 1) tileKey = 'tile_fence';
 
-        // Farm area (central area with dirt)
-        if (x >= 8 && x < 24 && y >= 8 && y < 22) {
-          tileKey = 'tile_dirt';
-        }
+        this.add.image(px, py, tileKey).setScale(SCALE).setDepth(DEPTH.GROUND);
 
-        // Paths
-        if ((x === 7 && y >= 8 && y < 22) || (y === 7 && x >= 7 && x < 25)) {
-          tileKey = 'tile_path';
-        }
-        // Path to town (east)
-        if (y >= 14 && y <= 16 && x >= 24 && x < mapWidth) {
-          tileKey = 'tile_path';
-        }
-
-        // Water pond
-        if (x >= 28 && x < 33 && y >= 6 && y < 10) {
-          tileKey = 'tile_water';
-        }
-
-        // Stone border at edges
-        if (x === 0 || y === 0 || x === mapWidth - 1 || y === mapHeight - 1) {
-          tileKey = 'tile_fence';
-        }
-
-        const tile = this.add.image(px, py, tileKey).setScale(SCALE).setDepth(DEPTH.GROUND);
-
-        // Water and fence are colliders
         if (tileKey === 'tile_water' || tileKey === 'tile_fence') {
           const collider = this.physics.add.staticImage(px, py, tileKey)
-            .setScale(SCALE)
-            .setVisible(false);
+            .setScale(SCALE).setVisible(false);
           collider.body!.setSize(SCALED_TILE, SCALED_TILE);
           this.colliders!.add(collider);
         }
       }
     }
 
-    // Place house
+    // House
     const houseX = 12 * SCALED_TILE;
     const houseY = 5 * SCALED_TILE;
     const house = this.add.image(houseX, houseY, 'house').setScale(SCALE).setOrigin(0.5, 1);
     this.depthSortedSprites.push(house);
 
-    // House collision — zone spanning the full house width, 1 tile tall at the base.
-    const houseColliderWidth = TILE_SIZE * 3 * SCALE;  // 144
-    const houseColliderHeight = SCALED_TILE;            // 48
+    const houseColliderWidth = TILE_SIZE * 3 * SCALE;
+    const houseColliderHeight = SCALED_TILE;
     const houseZone = this.add.zone(houseX, houseY - houseColliderHeight / 2, houseColliderWidth, houseColliderHeight);
     this.physics.add.existing(houseZone, true);
     this.colliders!.add(houseZone as any);
 
-    // Place interactable objects
     this.placeInteractables();
-
-    // Add trees along the borders and wilderness areas
     this.placeTrees();
   }
 
   private placeInteractables(): void {
-    // Sign near farm entrance
     this.placeObject('sign', 7 * SCALED_TILE, 14 * SCALED_TILE, {
-      id: 'farm_sign',
-      type: 'sign' as const,
-      data: { text: 'Welcome to your farm!\nPress E or SPACE to interact with objects.\nUse 1-9 to select tools from your hotbar.' },
+      id: 'farm_sign', type: 'sign' as const,
+      data: { text: 'Welcome to your farm!\nPress E or SPACE to interact.\nUse 1-9 for hotbar tools.\nPress I for inventory.' },
     });
-
-    // Mailbox near house
     this.placeObject('mailbox', 14 * SCALED_TILE, 7 * SCALED_TILE, {
-      id: 'mailbox',
-      type: 'mailbox' as const,
+      id: 'mailbox', type: 'mailbox' as const,
       data: { mail: 'Dear Farmer,\nWelcome to your new life in FarmMonsters valley!\nTend your crops, catch monsters, and make friends!\n- The Mayor' },
     });
-
-    // Shipping bin
     this.placeObject('shipping_bin', 10 * SCALED_TILE, 7 * SCALED_TILE, {
-      id: 'shipping_bin',
-      type: 'shipping_bin' as const,
-      data: {},
+      id: 'shipping_bin', type: 'shipping_bin' as const, data: {},
     });
-
-    // House door
     this.interactionSystem.register({
-      id: 'house_door',
-      x: 12 * SCALED_TILE,
-      y: 7 * SCALED_TILE,
-      type: 'door',
-      data: { destination: 'house_interior' },
+      id: 'house_door', x: 12 * SCALED_TILE, y: 7 * SCALED_TILE,
+      type: 'door', data: { destination: 'house_interior' },
     });
-
-    // Bed (inside house area — accessible from door interaction for now)
     this.interactionSystem.register({
-      id: 'bed',
-      x: 11 * SCALED_TILE,
-      y: 6 * SCALED_TILE,
-      type: 'bed',
-      data: {},
+      id: 'bed', x: 11 * SCALED_TILE, y: 6 * SCALED_TILE,
+      type: 'bed', data: {},
     });
-
-    // Chest near house
     this.placeObject('chest', 16 * SCALED_TILE, 7 * SCALED_TILE, {
-      id: 'storage_chest_1',
-      type: 'chest' as const,
-      data: { items: [] },
+      id: 'storage_chest_1', type: 'chest' as const, data: { items: [] },
     });
-
-    // Sign near exit to town
     this.placeObject('sign', 38 * SCALED_TILE, 15 * SCALED_TILE, {
-      id: 'town_sign',
-      type: 'sign' as const,
+      id: 'town_sign', type: 'sign' as const,
       data: { text: 'Town Center - Coming Soon!\nThe path continues east toward town...' },
     });
-
-    // Sign near pond
     this.placeObject('sign', 27 * SCALED_TILE, 6 * SCALED_TILE, {
-      id: 'pond_sign',
-      type: 'sign' as const,
+      id: 'pond_sign', type: 'sign' as const,
       data: { text: 'Farm Pond\nTry fishing here!\n(Fishing coming in a future update)' },
     });
   }
 
-  /**
-   * Place a world object with collision and interaction.
-   * The visible sprite uses origin(0.5, 1) so that y = bottom edge (for Y-sorting).
-   * The collision zone is placed to match the visual position.
-   */
   private placeObject(
     textureKey: string, x: number, y: number,
     interactConfig: { id: string; type: any; data: Record<string, any> }
   ): Phaser.GameObjects.Image {
     const obj = this.add.image(x, y, textureKey).setScale(SCALE).setOrigin(0.5, 1);
     this.depthSortedSprites.push(obj);
-
-    // Collision zone matching the visual position.
-    // With origin(0.5,1) the visual center is at (x, y - displayH/2).
-    // All placed objects are 16px tiles → displayH = SCALED_TILE.
     const zone = this.add.zone(x, y - SCALED_TILE / 2, SCALED_TILE, SCALED_TILE);
     this.physics.add.existing(zone, true);
     this.colliders!.add(zone as any);
-
-    // Register as interactable at the visual center
     this.interactionSystem.register({
-      id: interactConfig.id,
-      x,
-      y: y - SCALED_TILE / 2,
-      type: interactConfig.type,
-      data: interactConfig.data,
+      id: interactConfig.id, x, y: y - SCALED_TILE / 2,
+      type: interactConfig.type, data: interactConfig.data,
     });
-
     return obj;
   }
 
   private placeTrees(): void {
-    // Scattered trees around the farm
     const treePositions = [
       [3, 3], [5, 4], [2, 10], [4, 18], [3, 24],
       [30, 3], [35, 4], [32, 12], [34, 20], [36, 25],
       [25, 3], [27, 4], [26, 22], [28, 24],
       [6, 26], [10, 27], [15, 26], [20, 27], [25, 26],
     ];
-
     for (const [tx, ty] of treePositions) {
       const x = tx * SCALED_TILE;
       const y = ty * SCALED_TILE;
-
-      // Origin at bottom-center so Y-sort uses the trunk base, not the canopy
       const tree = this.add.image(x, y, 'tree').setScale(SCALE).setOrigin(0.5, 1);
       this.depthSortedSprites.push(tree);
-
-      // Trunk collision — small box at the base of the tree.
-      const trunkSize = SCALED_TILE * 0.5; // 24px
+      const trunkSize = SCALED_TILE * 0.5;
       const trunkZone = this.add.zone(x, y - trunkSize / 2, trunkSize, trunkSize);
       this.physics.add.existing(trunkZone, true);
       this.colliders!.add(trunkZone as any);
     }
-
-    // Some stumps
-    const stumpPositions = [[15, 10], [18, 14], [22, 11]];
-    for (const [sx, sy] of stumpPositions) {
+    for (const [sx, sy] of [[15, 10], [18, 14], [22, 11]]) {
       this.placeObject('stump', sx * SCALED_TILE, sy * SCALED_TILE, {
-        id: `stump_${sx}_${sy}`,
-        type: 'stump' as const,
+        id: `stump_${sx}_${sy}`, type: 'stump' as const,
         data: { text: 'A tree stump. Use an axe to remove it.' },
       });
+      // Block all tiles covered by the collision zone (sprite origin is bottom-center,
+      // collision zone is shifted up by half a tile, so it spans a 2x2 area)
+      this.blockObstacleTiles(sx, sy);
     }
-
-    // Some rocks
-    const rockPositions = [[12, 12], [20, 9], [16, 18]];
-    for (const [rx, ry] of rockPositions) {
+    for (const [rx, ry] of [[12, 12], [20, 9], [16, 18]]) {
       this.placeObject('rock', rx * SCALED_TILE, ry * SCALED_TILE, {
-        id: `rock_${rx}_${ry}`,
-        type: 'rock' as const,
+        id: `rock_${rx}_${ry}`, type: 'rock' as const,
         data: { text: 'A big rock. Use a pickaxe to break it.' },
       });
+      this.blockObstacleTiles(rx, ry);
     }
   }
 
+  /**
+   * Block all farm tiles covered by an obstacle's collision zone.
+   * placeObject() sets origin(0.5, 1) and creates a collision zone at
+   * (x, y - SCALED_TILE/2) with size SCALED_TILE x SCALED_TILE, which
+   * means the collision spans from grid tile (gx-1, gy-1) to (gx, gy).
+   * We block the full 2x2 footprint so no tile under the obstacle can be tilled.
+   */
+  private blockObstacleTiles(gx: number, gy: number): void {
+    for (let dx = -1; dx <= 0; dx++) {
+      for (let dy = -1; dy <= 0; dy++) {
+        this.farmingSystem.blockTile(gx + dx, gy + dy);
+      }
+    }
+  }
+
+  // ─── FARM TILE VISUALS ──────────────────────────────────
+
+  private buildFarmTileOverlays(): void {
+    for (const tile of this.farmingSystem.getAllTiles()) {
+      this.updateFarmTileVisual(tile.x, tile.y, tile);
+    }
+  }
+
+  private updateFarmTileVisual(gx: number, gy: number, tile: FarmTile): void {
+    const key = `${gx},${gy}`;
+    const { px, py } = gridToPixel(gx, gy);
+    let visual = this.farmTileVisuals.get(key);
+
+    if (tile.state === 'untilled') {
+      if (visual) {
+        visual.tileSprite.destroy();
+        if (visual.cropSprite) {
+          const idx = this.depthSortedSprites.indexOf(visual.cropSprite);
+          if (idx >= 0) this.depthSortedSprites.splice(idx, 1);
+          visual.cropSprite.destroy();
+        }
+        this.farmTileVisuals.delete(key);
+      }
+      return;
+    }
+
+    const tileTexture = tile.isWatered ? 'tile_watered' : 'tile_tilled';
+
+    if (!visual) {
+      const tileSprite = this.add.image(px, py, tileTexture)
+        .setScale(SCALE).setDepth(DEPTH.GROUND_OVERLAY);
+      visual = { tileSprite };
+      this.farmTileVisuals.set(key, visual);
+    } else {
+      visual.tileSprite.setTexture(tileTexture);
+    }
+
+    // Crop sprite
+    if (tile.state === 'withered') {
+      this.setCropSprite(visual, px, py, 'crop_withered');
+    } else if (tile.cropId && tile.growthStage !== undefined &&
+               (tile.state === 'planted' || tile.state === 'grown')) {
+      const cropDef = ItemRegistry.getCrop(tile.cropId);
+      if (cropDef) {
+        const maxStage = cropDef.growthStages;
+        const stage = tile.state === 'grown'
+          ? maxStage
+          : Math.min(tile.growthStage, maxStage);
+        const textureKey = `${cropDef.textureKey}_${stage}`;
+        this.setCropSprite(visual, px, py, textureKey);
+      }
+    } else {
+      // Remove crop sprite if exists
+      if (visual.cropSprite) {
+        const idx = this.depthSortedSprites.indexOf(visual.cropSprite);
+        if (idx >= 0) this.depthSortedSprites.splice(idx, 1);
+        visual.cropSprite.destroy();
+        visual.cropSprite = undefined;
+      }
+    }
+  }
+
+  private setCropSprite(visual: FarmTileVisual, px: number, py: number, textureKey: string): void {
+    if (!this.textures.exists(textureKey)) return;
+    if (visual.cropSprite) {
+      visual.cropSprite.setTexture(textureKey);
+    } else {
+      visual.cropSprite = this.add.image(px, py + SCALED_TILE / 2, textureKey)
+        .setScale(SCALE).setOrigin(0.5, 1);
+      this.depthSortedSprites.push(visual.cropSprite);
+    }
+  }
+
+  // ─── HUD ────────────────────────────────────────────────
+
   private createHUD(): void {
-    // Time display (top right)
     const hudBg = this.add.graphics().setScrollFactor(0).setDepth(DEPTH.HUD_BG);
     hudBg.fillStyle(UI_COLORS.panelBg, 0.8);
     hudBg.fillRoundedRect(GAME_WIDTH - 180, 8, 172, 60, 6);
@@ -329,167 +363,244 @@ export class WorldScene extends Phaser.Scene {
     hudBg.strokeRoundedRect(GAME_WIDTH - 180, 8, 172, 60, 6);
 
     this.timeText = this.add.text(GAME_WIDTH - 170, 14, '6:00 AM', {
-      fontSize: '16px',
-      color: UI_COLORS.textHighlight,
-      fontFamily: 'monospace',
+      fontSize: '16px', color: UI_COLORS.textHighlight, fontFamily: 'monospace',
     }).setScrollFactor(0).setDepth(DEPTH.HUD_TEXT);
 
     this.dateText = this.add.text(GAME_WIDTH - 170, 34, 'Spring 1, Year 1', {
-      fontSize: '11px',
-      color: UI_COLORS.textSecondary,
-      fontFamily: 'monospace',
+      fontSize: '11px', color: UI_COLORS.textSecondary, fontFamily: 'monospace',
     }).setScrollFactor(0).setDepth(DEPTH.HUD_TEXT);
 
-    // Gold display
     this.goldText = this.add.text(GAME_WIDTH - 170, 50, `${this.saveData.player.gold}G`, {
-      fontSize: '12px',
-      color: '#ffcc00',
-      fontFamily: 'monospace',
+      fontSize: '12px', color: '#ffcc00', fontFamily: 'monospace',
     }).setScrollFactor(0).setDepth(DEPTH.HUD_TEXT);
 
-    // Energy bar (top left)
     const energyBg = this.add.graphics().setScrollFactor(0).setDepth(DEPTH.HUD_BG);
     energyBg.fillStyle(UI_COLORS.panelBg, 0.8);
     energyBg.fillRoundedRect(8, 8, 120, 35, 6);
     energyBg.lineStyle(1, UI_COLORS.panelBorder, 0.6);
     energyBg.strokeRoundedRect(8, 8, 120, 35, 6);
 
-    const energyLabel = this.add.text(14, 12, 'Energy', {
-      fontSize: '10px',
-      color: UI_COLORS.textSecondary,
-      fontFamily: 'monospace',
+    this.add.text(14, 12, 'Energy', {
+      fontSize: '10px', color: UI_COLORS.textSecondary, fontFamily: 'monospace',
     }).setScrollFactor(0).setDepth(DEPTH.HUD_TEXT);
 
     this.energyBar = this.add.graphics().setScrollFactor(0).setDepth(DEPTH.HUD_TEXT);
     this.drawEnergyBar();
 
-    // Interaction prompt
     this.interactionPrompt = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 160, '[E] Interact', {
-      fontSize: '12px',
-      color: UI_COLORS.textHighlight,
-      fontFamily: 'monospace',
-      backgroundColor: '#00000088',
-      padding: { x: 8, y: 4 },
+      fontSize: '12px', color: UI_COLORS.textHighlight, fontFamily: 'monospace',
+      backgroundColor: '#00000088', padding: { x: 8, y: 4 },
     }).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH.HUD_BG).setVisible(false);
   }
 
   private drawEnergyBar(): void {
     this.energyBar.clear();
     const ratio = this.saveData.player.energy / this.saveData.player.maxEnergy;
-
-    // Background
     this.energyBar.fillStyle(0x333333);
     this.energyBar.fillRect(14, 26, 106, 10);
-
-    // Fill
     const barColor = ratio > 0.5 ? 0x44cc44 : ratio > 0.25 ? 0xcccc44 : 0xcc4444;
     this.energyBar.fillStyle(barColor);
     this.energyBar.fillRect(14, 26, 106 * ratio, 10);
   }
 
+  // ─── EVENTS ─────────────────────────────────────────────
+
   private setupEvents(): void {
-    // Player interaction
     this.bus.on(EVENTS.PLAYER_INTERACT, (px: number, py: number, fx: number, fy: number) => {
       if (this.dialogBox.getIsVisible()) return;
-
-      const nearest = this.interactionSystem.findNearest(px, py, fx, fy);
-      if (nearest) {
-        const result = this.interactionSystem.interact(nearest, px, py);
-
-        switch (result.type) {
-          case 'dialog':
-          case 'locked':
-            this.player.freeze();
-            this.dialogBox.show({
-              text: result.text || '',
-              choices: result.choices,
-              callback: (choice) => {
-                if (result.callback) result.callback(choice);
-                this.player.unfreeze();
-              },
-            });
-            break;
-          case 'action':
-            if (result.callback) result.callback();
-            break;
-          case 'battle':
-            if (result.callback) result.callback();
-            break;
-        }
-      }
+      if (this.inventoryUI.getIsVisible()) return;
+      this.handlePlayerAction(px, py, fx, fy);
     });
 
-    // Dialog close - unfreeze player
+    this.bus.on(EVENTS.FARM_TILE_UPDATED, (gx: number, gy: number, tile: FarmTile) => {
+      this.updateFarmTileVisual(gx, gy, tile);
+    });
+
+    this.bus.on(EVENTS.ENERGY_CHANGED, (energy: number) => {
+      this.saveData.player.energy = energy;
+      this.drawEnergyBar();
+    });
+
+    this.bus.on(EVENTS.GOLD_CHANGED, (gold: number) => {
+      this.saveData.player.gold = gold;
+      this.goldText.setText(`${gold}G`);
+    });
+
     this.bus.on(EVENTS.DIALOG_CLOSE, () => {
       this.player.unfreeze();
     });
 
-    // Sleep event
     this.bus.on('player:sleep', () => {
       this.handleSleep();
     });
+
+    this.bus.on(EVENTS.HOTBAR_UPDATED, (items: (string | null)[]) => {
+      this.saveData.player.hotbar = [...items];
+    });
+
+    // Debug event: add gold
+    this.bus.on('debug:addGold', (amount: number) => {
+      this.saveData.player.gold += amount;
+      this.goldText.setText(`${this.saveData.player.gold}G`);
+    });
   }
+
+  private handlePlayerAction(px: number, py: number, fx: number, fy: number): void {
+    const targetPx = px + fx * SCALED_TILE;
+    const targetPy = py + fy * SCALED_TILE;
+    const { gx, gy } = pixelToGrid(targetPx, targetPy);
+
+    const selectedItemId = this.hotbar.getSelectedItem();
+
+    // 1. World object interactions always take priority (signs, NPCs, doors, etc.)
+    const nearest = this.interactionSystem.findNearest(px, py, fx, fy);
+    if (nearest) {
+      const result = this.interactionSystem.interact(nearest, px, py);
+      switch (result.type) {
+        case 'dialog':
+        case 'locked':
+          this.player.freeze();
+          this.dialogBox.show({
+            text: result.text || '',
+            choices: result.choices,
+            callback: (choice) => {
+              if (result.callback) result.callback(choice);
+              this.player.unfreeze();
+            },
+          });
+          return;
+        case 'action':
+          if (result.callback) result.callback();
+          return;
+        case 'battle':
+          if (result.callback) result.callback();
+          return;
+        case 'menu':
+          if (result.callback) result.callback();
+          return;
+      }
+    }
+
+    // 2. Harvest grown crops (bare hands)
+    if (this.farmingSystem.isInFarmArea(gx, gy)) {
+      const farmTile = this.farmingSystem.getTile(gx, gy);
+      if (farmTile?.state === 'grown') {
+        const harvestResult = this.toolSystem.harvestCrop(gx, gy);
+        if (harvestResult.success) {
+          this.saveData.player.stats.cropsHarvested++;
+          if (harvestResult.message) this.showNotification(harvestResult.message);
+          return;
+        }
+      }
+    }
+
+    // 3. Use tool or plant seed
+    if (selectedItemId) {
+      const itemDef = ItemRegistry.getItem(selectedItemId);
+      if (itemDef && (itemDef.category === 'tool' || itemDef.category === 'seed')) {
+        const timeState = this.timeSystem.getState();
+        const result = this.toolSystem.useItem(
+          selectedItemId, gx, gy, timeState.season, timeState.day
+        );
+        if (result.success || result.message) {
+          if (result.message) this.showNotification(result.message);
+          return;
+        }
+      }
+    }
+  }
+
+  // ─── INVENTORY ──────────────────────────────────────────
+
+  private toggleInventory(): void {
+    if (this.dialogBox.getIsVisible()) return;
+    if (this.inventoryUI.getIsVisible()) {
+      this.inventoryUI.hide();
+      this.player.unfreeze();
+      this.timeSystem.resume();
+    } else {
+      this.inventoryUI.show();
+      this.player.freeze();
+      this.timeSystem.pause();
+    }
+  }
+
+  // ─── SLEEP / NEW DAY ───────────────────────────────────
 
   private handleSleep(): void {
     this.player.freeze();
-
-    // Fade out
     this.cameras.main.fadeOut(1000, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
-      // Advance to next day
       this.timeSystem.advanceToNextDay();
-      this.saveData.time = {
-        ...this.saveData.time,
-        ...this.timeSystem.getState(),
-      };
+      this.saveData.time = { ...this.saveData.time, ...this.timeSystem.getState() };
+
+      const currentSeason = this.timeSystem.getState().season;
+      this.farmingSystem.onNewDay(currentSeason);
+      this.processShippingBin();
+
       this.saveData.player.energy = this.saveData.player.maxEnergy;
       this.saveData.player.health = this.saveData.player.maxHealth;
+      this.toolSystem.setEnergy(this.saveData.player.energy, this.saveData.player.maxEnergy);
       this.saveData.player.stats.daysPlayed++;
 
-      // Auto-save
+      this.refreshAllFarmVisuals();
+
       this.saveData.player.position = { x: this.player.x, y: this.player.y };
+      this.saveData.farmTiles = this.farmingSystem.serialize();
+      this.saveData.inventory = this.inventorySystem.serialize();
       SaveSystem.saveToSlot(this.currentSlot, this.saveData);
 
-      // Fade in
       this.cameras.main.fadeIn(1000, 0, 0, 0);
       this.cameras.main.once('camerafadeincomplete', () => {
         this.player.unfreeze();
-
-        // Show new day notification
-        const dayText = this.timeSystem.getFormattedDate();
-        this.showNotification(dayText);
+        this.showNotification(this.timeSystem.getFormattedDate());
       });
     });
   }
 
-  private showNotification(text: string): void {
-    const notif = this.add.text(GAME_WIDTH / 2, 100, text, {
-      fontSize: '20px',
-      color: UI_COLORS.textHighlight,
-      fontFamily: 'monospace',
-      stroke: '#000000',
-      strokeThickness: 4,
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH.NOTIFICATION);
-
-    this.tweens.add({
-      targets: notif,
-      alpha: { from: 1, to: 0 },
-      y: 80,
-      duration: 3000,
-      ease: 'Power2',
-      onComplete: () => notif.destroy(),
-    });
+  private processShippingBin(): void {
+    if (!this.saveData.shippingBin?.length) return;
+    let totalGold = 0;
+    for (const item of this.saveData.shippingBin) {
+      const itemDef = ItemRegistry.getItem(item.id);
+      if (itemDef?.sellPrice) totalGold += itemDef.sellPrice * item.quantity;
+    }
+    if (totalGold > 0) {
+      this.saveData.player.gold += totalGold;
+      this.saveData.player.stats.totalEarnings += totalGold;
+      this.goldText.setText(`${this.saveData.player.gold}G`);
+    }
+    this.saveData.shippingBin = [];
   }
 
+  private refreshAllFarmVisuals(): void {
+    for (const visual of this.farmTileVisuals.values()) {
+      visual.tileSprite.destroy();
+      if (visual.cropSprite) {
+        const idx = this.depthSortedSprites.indexOf(visual.cropSprite);
+        if (idx >= 0) this.depthSortedSprites.splice(idx, 1);
+        visual.cropSprite.destroy();
+      }
+    }
+    this.farmTileVisuals.clear();
+    this.buildFarmTileOverlays();
+  }
+
+  // ─── PAUSE / SAVE ──────────────────────────────────────
+
   private openPauseMenu(): void {
+    if (this.inventoryUI.getIsVisible()) {
+      this.inventoryUI.hide();
+      this.player.unfreeze();
+      this.timeSystem.resume();
+      return;
+    }
     if (this.dialogBox.getIsVisible()) {
       this.dialogBox.hide();
       return;
     }
-
     this.player.freeze();
     this.timeSystem.pause();
-
     this.dialogBox.show({
       text: 'Game Paused',
       choices: ['Resume', 'Save Game', 'Settings', 'Quit to Menu'],
@@ -506,7 +617,6 @@ export class WorldScene extends Phaser.Scene {
             this.showNotification('Game Saved!');
             break;
           case 'Settings':
-            // For now just resume — settings overlay TBD
             this.player.unfreeze();
             this.timeSystem.resume();
             break;
@@ -526,60 +636,100 @@ export class WorldScene extends Phaser.Scene {
   private saveGame(): void {
     this.saveData.player.position = { x: this.player.x, y: this.player.y };
     this.saveData.player.facing = this.player.facing;
+    this.saveData.player.energy = this.toolSystem.getEnergy();
     const timeState = this.timeSystem.getState();
     this.saveData.time = {
-      day: timeState.day,
-      season: timeState.season,
-      year: timeState.year,
-      hour: timeState.hour,
-      minute: timeState.minute,
+      day: timeState.day, season: timeState.season, year: timeState.year,
+      hour: timeState.hour, minute: timeState.minute,
     };
+    this.saveData.farmTiles = this.farmingSystem.serialize();
+    this.saveData.inventory = this.inventorySystem.serialize();
     SaveSystem.saveToSlot(this.currentSlot, this.saveData);
   }
 
-  update(time: number, delta: number): void {
-    // Update player
-    this.player.update();
+  private showNotification(text: string): void {
+    const notif = this.add.text(GAME_WIDTH / 2, 100, text, {
+      fontSize: '20px', color: UI_COLORS.textHighlight, fontFamily: 'monospace',
+      stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(DEPTH.NOTIFICATION);
+    this.tweens.add({
+      targets: notif, alpha: { from: 1, to: 0 }, y: 80,
+      duration: 3000, ease: 'Power2', onComplete: () => notif.destroy(),
+    });
+  }
 
-    // Update time system
+  // ─── UPDATE LOOP ────────────────────────────────────────
+
+  update(_time: number, delta: number): void {
+    this.player.update();
     this.timeSystem.update(delta);
 
-    // Update HUD
     this.timeText.setText(this.timeSystem.getFormattedTime());
     this.dateText.setText(this.timeSystem.getFormattedDate());
     this.drawEnergyBar();
 
-    // Update day/night overlay
     const tint = this.timeSystem.getDayNightTint();
     const light = this.timeSystem.getAmbientLight();
     this.dayNightOverlay.setFillStyle(tint, 1 - light);
 
-    // Y-sort all world objects for proper depth.
-    // Every sprite's depth = its y position (bottom edge due to origin 0.5,1).
-    // This means sprites lower on screen render in front of sprites higher up,
-    // giving the classic 2D top-down depth illusion.
     for (const sprite of this.depthSortedSprites) {
       sprite.setDepth(sprite.y);
     }
 
-    // Check for nearby interactables to show prompt
-    if (!this.dialogBox.getIsVisible()) {
+    // Interaction prompt
+    if (!this.dialogBox.getIsVisible() && !this.inventoryUI.getIsVisible()) {
       const facing = this.player.getFacingVector();
+      const targetPx = this.player.x + facing.x * SCALED_TILE;
+      const targetPy = this.player.y + facing.y * SCALED_TILE;
+      const { gx, gy } = pixelToGrid(targetPx, targetPy);
+
+      const selectedItemId = this.hotbar.getSelectedItem();
       const nearest = this.interactionSystem.findNearest(
         this.player.x, this.player.y, facing.x, facing.y
       );
-      this.interactionPrompt.setVisible(nearest !== null);
+
+      // World object interactions take priority in the prompt
+      if (nearest) {
+        this.interactionPrompt.setText('[E] Interact');
+        this.interactionPrompt.setVisible(true);
+      } else if (this.farmingSystem.isInFarmArea(gx, gy)) {
+        const farmTile = this.farmingSystem.getTile(gx, gy);
+        if (farmTile?.state === 'grown') {
+          this.interactionPrompt.setText('[E] Harvest');
+          this.interactionPrompt.setVisible(true);
+        } else if (selectedItemId) {
+          const itemDef = ItemRegistry.getItem(selectedItemId);
+          if (itemDef && (itemDef.category === 'tool' || itemDef.category === 'seed')) {
+            this.interactionPrompt.setText(`[E] Use ${itemDef.name}`);
+            this.interactionPrompt.setVisible(true);
+          } else {
+            this.interactionPrompt.setVisible(false);
+          }
+        } else {
+          this.interactionPrompt.setVisible(false);
+        }
+      } else {
+        this.interactionPrompt.setVisible(false);
+      }
     } else {
       this.interactionPrompt.setVisible(false);
     }
 
-    // Add player collision with map colliders
     if (this.colliders) {
       this.physics.collide(this.player, this.colliders);
+    }
+
+    // Debug panel update
+    if (this.debugPanel) {
+      this.debugPanel.update(this.player);
     }
   }
 
   shutdown(): void {
     this.bus.removeAll();
+    if (this.debugPanel) {
+      this.debugPanel.destroy();
+      this.debugPanel = null;
+    }
   }
 }
