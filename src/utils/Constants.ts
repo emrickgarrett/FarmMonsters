@@ -9,12 +9,15 @@ export const GAME_HEIGHT = 600;
 export const FARM_WIDTH = 40;
 export const FARM_HEIGHT = 30;
 
+// Farm planting area (tile grid coordinates, inclusive)
+export const FARM_AREA = { minX: 8, maxX: 23, minY: 8, maxY: 21 } as const;
+
 // Player
 export const PLAYER_SPEED = 120;
 export const INTERACTION_RANGE = SCALED_TILE * 1.2;
 
 // Time system
-export const DAY_LENGTH_MS = 720_000; // 12 minutes real time = 1 game day
+export const DAY_LENGTH_MS = 360_000; // 6 minutes real time = 1 game day
 export const HOURS_PER_DAY = 24;
 export const WAKE_HOUR = 6;
 export const SLEEP_HOUR = 2; // 2 AM forced sleep
@@ -27,6 +30,9 @@ export type Season = typeof SEASONS[number];
 
 // Hotbar
 export const HOTBAR_SLOTS = 9;
+
+// Inventory
+export const INVENTORY_SIZE = 27;
 
 // Monster party
 export const MAX_PARTY_SIZE = 6;
@@ -54,6 +60,16 @@ export const TOOL_TYPES = [
 ] as const;
 export type ToolType = typeof TOOL_TYPES[number];
 
+// Energy costs per tool action
+export const ENERGY_COSTS: Record<ToolType, number> = {
+  Hoe: 4,
+  WateringCan: 2,
+  Axe: 6,
+  Shovel: 4,
+  FishingRod: 8,
+  Pickaxe: 6,
+};
+
 // Colors for placeholder assets
 export const TYPE_COLORS: Record<MonsterType, number> = {
   Fire: 0xff4444,
@@ -70,6 +86,7 @@ export const TERRAIN_COLORS = {
   grass: 0x5a8a3c,
   dirt: 0x8b6914,
   tilled: 0x6b4914,
+  watered: 0x4b3510,
   water: 0x3366aa,
   sand: 0xc2b280,
   stone: 0x777777,
@@ -79,6 +96,14 @@ export const TERRAIN_COLORS = {
   roof: 0x884422,
   door: 0x664400,
   fence: 0x996633,
+};
+
+// Crop display colors for placeholder sprites
+export const CROP_COLORS: Record<string, number> = {
+  parsnip: 0xffa54f,
+  potato: 0xc4a46c,
+  tomato: 0xff4444,
+  pumpkin: 0xff8800,
 };
 
 // UI Colors (Stardew Valley / Harvest Moon inspired)
@@ -122,6 +147,8 @@ export const EVENTS = {
   PLAYER_MOVED: 'player:moved',
   PLAYER_INTERACT: 'player:interact',
   PLAYER_TOOL_USE: 'player:toolUse',
+  ENERGY_CHANGED: 'player:energyChanged',
+  GOLD_CHANGED: 'player:goldChanged',
 
   // Hotbar
   HOTBAR_SELECT: 'hotbar:select',
@@ -143,10 +170,14 @@ export const EVENTS = {
   BATTLE_ACTION: 'battle:action',
 
   // Farming
+  TILE_TILLED: 'farm:tileTilled',
   CROP_PLANTED: 'farm:cropPlanted',
   CROP_WATERED: 'farm:cropWatered',
   CROP_HARVESTED: 'farm:cropHarvested',
-  TILE_TILLED: 'farm:tileTilled',
+  FARM_TILE_UPDATED: 'farm:tileUpdated',
+  FARM_CROP_WITHERED: 'farm:cropWithered',
+  SHIPPING_BIN_ADD: 'farm:shippingAdd',
+  SHIPPING_BIN_SELL: 'farm:shippingSell',
 
   // Monsters
   MONSTER_CAUGHT: 'monster:caught',
@@ -165,4 +196,24 @@ export const EVENTS = {
   MENU_OPEN: 'ui:menuOpen',
   MENU_CLOSE: 'ui:menuClose',
   NOTIFICATION: 'ui:notification',
+  INVENTORY_OPEN: 'ui:inventoryOpen',
+  INVENTORY_CLOSE: 'ui:inventoryClose',
+  STORAGE_OPEN: 'ui:storageOpen',
+  STORAGE_CLOSE: 'ui:storageClose',
 } as const;
+
+// Utility: convert pixel position to tile grid coordinate
+export function pixelToGrid(px: number, py: number): { gx: number; gy: number } {
+  return {
+    gx: Math.floor(px / SCALED_TILE),
+    gy: Math.floor(py / SCALED_TILE),
+  };
+}
+
+// Utility: convert tile grid coordinate to pixel center position
+export function gridToPixel(gx: number, gy: number): { px: number; py: number } {
+  return {
+    px: gx * SCALED_TILE + SCALED_TILE / 2,
+    py: gy * SCALED_TILE + SCALED_TILE / 2,
+  };
+}

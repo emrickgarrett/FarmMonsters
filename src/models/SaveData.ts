@@ -9,10 +9,12 @@ export interface InventoryItem {
 export interface FarmTile {
   x: number;
   y: number;
-  state: 'untilled' | 'tilled' | 'planted' | 'watered' | 'grown';
+  state: 'untilled' | 'tilled' | 'planted' | 'watered' | 'grown' | 'withered';
   cropId?: string;
   growthStage?: number;
+  daysGrown?: number;
   dayPlanted?: number;
+  seasonPlanted?: Season;
   isWatered?: boolean;
 }
 
@@ -49,6 +51,8 @@ export interface SaveData {
   party: string[]; // monster IDs in party order
   farmTiles: FarmTile[];
   farmMonsters: FarmMonsterAssignment[];
+  chests: Record<string, InventoryItem[]>;
+  shippingBin: InventoryItem[];
   time: {
     day: number;
     season: Season;
@@ -67,7 +71,7 @@ export interface GameSettings {
   showHotkeys: boolean;
 }
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 export const MAX_SAVE_SLOTS = 3;
 export const SAVE_KEY_PREFIX = 'farmmonsters_save_';
 export const SETTINGS_KEY = 'farmmonsters_settings';
@@ -82,7 +86,6 @@ export function createDefaultSettings(): GameSettings {
 }
 
 export function createNewSaveData(playerName: string, playerData?: PlayerData): SaveData {
-  // Import dynamically avoided - caller should pass playerData or use the import directly
   const player = playerData ?? {
     name: playerName,
     gold: 500,
@@ -116,6 +119,8 @@ export function createNewSaveData(playerName: string, playerData?: PlayerData): 
     party: [],
     farmTiles: [],
     farmMonsters: [],
+    chests: {},
+    shippingBin: [],
     time: {
       day: 1,
       season: 'Spring',

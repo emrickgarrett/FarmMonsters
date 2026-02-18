@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT, HOTBAR_SLOTS, UI_COLORS, EVENTS, SCALE } from '../utils/Constants';
 import { EventBus } from '../utils/EventBus';
+import { ItemRegistry } from '../data/ItemRegistry';
 
 interface HotbarSlot {
   itemId: string | null;
@@ -9,7 +10,8 @@ interface HotbarSlot {
   keyLabel: Phaser.GameObjects.Text;
 }
 
-const TOOL_ICON_MAP: Record<string, string> = {
+/** Fallback map for items that may not be in the registry yet (tools). */
+const ICON_FALLBACK: Record<string, string> = {
   hoe: 'icon_hoe',
   watering_can: 'icon_watering_can',
   axe: 'icon_axe',
@@ -133,7 +135,9 @@ export class Hotbar {
 
     // Add new icon if item exists
     if (itemId) {
-      const textureKey = TOOL_ICON_MAP[itemId] || itemId;
+      // Dynamic lookup: try ItemRegistry first, then fallback map, then raw ID
+      const itemDef = ItemRegistry.getItem(itemId);
+      const textureKey = itemDef?.textureKey ?? ICON_FALLBACK[itemId] ?? itemId;
       const x = 8 + index * (this.slotSize + this.slotGap) + this.slotSize / 2;
       const y = 4 + this.slotSize / 2;
 
@@ -152,6 +156,31 @@ export class Hotbar {
 
   getSelectedIndex(): number {
     return this.selectedIndex;
+  }
+
+  /** Get all hotbar item IDs (for saving). */
+  getItems(): (string | null)[] {
+    return this.slots.map(s => s.itemId);
+  }
+
+  /**
+   * Returns the hotbar slot index at the given screen coordinates, or -1 if none.
+   * Used by drag-and-drop from inventory.
+   */
+  getSlotAtPoint(screenX: number, screenY: number): number {
+    const barX = (GAME_WIDTH - this.totalWidth) / 2;
+    const barY = GAME_HEIGHT - this.barHeight - 8;
+
+    for (let i = 0; i < HOTBAR_SLOTS; i++) {
+      const slotX = barX + 8 + i * (this.slotSize + this.slotGap);
+      const slotY = barY + 4;
+
+      if (screenX >= slotX && screenX <= slotX + this.slotSize &&
+          screenY >= slotY && screenY <= slotY + this.slotSize) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   destroy(): void {

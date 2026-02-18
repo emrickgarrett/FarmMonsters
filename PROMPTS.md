@@ -71,3 +71,27 @@ All prompts from the project creator are logged here with timestamps.
 ## Prompt 8 — 2026-02-17
 
 > The padding on the credits screen within the scroll is off and it's cut off on both the top and bottom, making it unreadable at the top and bottom
+
+---
+
+## Prompt 9 — 2026-02-17
+
+> Looks good, can we git commit this to a branch, and point it at: https://github.com/emrickgarrett/FarmMonsters.git Then create the MR and I'll review it shortly while you go to phase 2 of the plan
+
+---
+
+## Prompt 10 — 2026-02-17
+
+> I have a list of bugs for you to fix, take them one at a time and work on them carefully.
+>
+> 1. Having an item equipped makes you unable to interact with objects, such as signs. Interactions should take priority.
+> 2. I have no way to equip the seeds from the inventory. I believe we should have the hotbar still be visible and allow the player to drag items to appropriate slots for them to use, such as the seeds.
+> 3. I can till under rocks/stumps, that should not be possible until the object is removed. I also think the rocks and stumps are slightly too small relative to their collision box, making it distracting when navigating the farm as a player
+
+---
+
+## Prompt 11 — 2026-02-17
+
+> I noticed I am still able to till the ground and plant crops under stumps and rocks, it seems like you are only accounting for the bottom right tile of the collision box, and not the entire sprite and collider.
+>
+> I would also like some debugging tools when in the dev environment to allow me to speed up time, so I can properly QA and verify your work

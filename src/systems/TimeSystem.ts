@@ -26,6 +26,9 @@ export class TimeSystem {
   /** Real ms per game minute (60 game-minutes = 1 game-hour) */
   private msPerGameMinute: number;
 
+  /** Time speed multiplier (1 = normal, 2 = 2x, etc.). Applied during update(). */
+  private timeScale: number = 1;
+
   constructor(initialState?: Partial<TimeState>) {
     this.bus = EventBus.getInstance();
     this.msPerGameMinute = MS_PER_GAME_HOUR / 60;
@@ -43,7 +46,7 @@ export class TimeSystem {
   update(deltaMs: number): void {
     if (this.state.isPaused) return;
 
-    this.accumulator += deltaMs;
+    this.accumulator += deltaMs * this.timeScale;
 
     while (this.accumulator >= this.msPerGameMinute) {
       this.accumulator -= this.msPerGameMinute;
@@ -182,5 +185,15 @@ export class TimeSystem {
   setTime(hour: number, minute: number): void {
     this.state.hour = hour;
     this.state.minute = minute;
+  }
+
+  /** Set time speed multiplier (1 = normal, 2 = 2x, etc.) */
+  setTimeScale(scale: number): void {
+    this.timeScale = Math.max(0, scale);
+  }
+
+  /** Get current time speed multiplier */
+  getTimeScale(): number {
+    return this.timeScale;
   }
 }

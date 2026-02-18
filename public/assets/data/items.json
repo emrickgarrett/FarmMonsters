@@ -1,0 +1,18 @@
+[
+  { "id": "hoe", "name": "Hoe", "category": "tool", "toolType": "Hoe", "stackable": false, "textureKey": "icon_hoe", "description": "Tills farmland for planting." },
+  { "id": "watering_can", "name": "Watering Can", "category": "tool", "toolType": "WateringCan", "stackable": false, "textureKey": "icon_watering_can", "description": "Waters tilled soil for crop growth." },
+  { "id": "axe", "name": "Axe", "category": "tool", "toolType": "Axe", "stackable": false, "textureKey": "icon_axe", "description": "Chops trees and stumps." },
+  { "id": "shovel", "name": "Shovel", "category": "tool", "toolType": "Shovel", "stackable": false, "textureKey": "icon_shovel", "description": "Digs up terrain and items." },
+  { "id": "fishing_rod", "name": "Fishing Rod", "category": "tool", "toolType": "FishingRod", "stackable": false, "textureKey": "icon_fishing_rod", "description": "Catches fish from water." },
+  { "id": "pickaxe", "name": "Pickaxe", "category": "tool", "toolType": "Pickaxe", "stackable": false, "textureKey": "icon_pickaxe", "description": "Breaks rocks and ore." },
+  { "id": "parsnip_seeds", "name": "Parsnip Seeds", "category": "seed", "cropId": "parsnip", "stackable": true, "maxStack": 99, "textureKey": "icon_seed_parsnip", "sellPrice": 10, "description": "Plant in tilled soil during Spring." },
+  { "id": "potato_seeds", "name": "Potato Seeds", "category": "seed", "cropId": "potato", "stackable": true, "maxStack": 99, "textureKey": "icon_seed_potato", "sellPrice": 25, "description": "Plant in tilled soil during Spring." },
+  { "id": "tomato_seeds", "name": "Tomato Seeds", "category": "seed", "cropId": "tomato", "stackable": true, "maxStack": 99, "textureKey": "icon_seed_tomato", "sellPrice": 25, "description": "Plant in tilled soil during Summer." },
+  { "id": "pumpkin_seeds", "name": "Pumpkin Seeds", "category": "seed", "cropId": "pumpkin", "stackable": true, "maxStack": 99, "textureKey": "icon_seed_pumpkin", "sellPrice": 50, "description": "Plant in tilled soil during Fall." },
+  { "id": "parsnip", "name": "Parsnip", "category": "crop", "stackable": true, "maxStack": 99, "textureKey": "icon_crop_parsnip", "sellPrice": 35, "description": "A common spring root vegetable." },
+  { "id": "potato", "name": "Potato", "category": "crop", "stackable": true, "maxStack": 99, "textureKey": "icon_crop_potato", "sellPrice": 80, "description": "A hearty tuber." },
+  { "id": "tomato", "name": "Tomato", "category": "crop", "stackable": true, "maxStack": 99, "textureKey": "icon_crop_tomato", "sellPrice": 60, "description": "A juicy red fruit." },
+  { "id": "pumpkin", "name": "Pumpkin", "category": "crop", "stackable": true, "maxStack": 99, "textureKey": "icon_crop_pumpkin", "sellPrice": 320, "description": "A big orange gourd." },
+  { "id": "wood", "name": "Wood", "category": "material", "stackable": true, "maxStack": 999, "textureKey": "icon_wood", "sellPrice": 2, "description": "A piece of lumber." },
+  { "id": "stone", "name": "Stone", "category": "material", "stackable": true, "maxStack": 999, "textureKey": "icon_stone", "sellPrice": 2, "description": "A chunk of rock." }
+]

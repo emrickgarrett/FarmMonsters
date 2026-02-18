@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { TILE_SIZE, TERRAIN_COLORS, UI_COLORS, TYPE_COLORS, MonsterType } from './Constants';
+import { TILE_SIZE, TERRAIN_COLORS, UI_COLORS, TYPE_COLORS, CROP_COLORS, MonsterType } from './Constants';
 
 /**
  * Generates all placeholder pixel art sprites at runtime.
@@ -20,6 +20,7 @@ export class AssetGenerator {
     this.generateToolIcons();
     this.generateInteractableObjects();
     this.generateMonsterPlaceholders();
+    this.generateFarmingAssets();
   }
 
   private createCanvas(width: number, height: number): CanvasRenderingContext2D {
@@ -38,6 +39,7 @@ export class AssetGenerator {
       ['tile_grass', TERRAIN_COLORS.grass],
       ['tile_dirt', TERRAIN_COLORS.dirt],
       ['tile_tilled', TERRAIN_COLORS.tilled],
+      ['tile_watered', TERRAIN_COLORS.watered],
       ['tile_water', TERRAIN_COLORS.water],
       ['tile_sand', TERRAIN_COLORS.sand],
       ['tile_stone', TERRAIN_COLORS.stone],
@@ -336,26 +338,35 @@ export class AssetGenerator {
     this.addPixelNoise(treeCtx, 0x338833, TILE_SIZE, TILE_SIZE * 2, 0.1);
     this.scene.textures.addCanvas('tree', treeCtx.canvas);
 
-    // Stump
+    // Stump (larger to better fill the tile)
     const stumpCtx = this.createCanvas(TILE_SIZE, TILE_SIZE);
     stumpCtx.fillStyle = '#664400';
-    stumpCtx.fillRect(3, 6, 10, 8);
+    stumpCtx.fillRect(1, 5, 14, 10);  // main body
     stumpCtx.fillStyle = '#886644';
-    stumpCtx.fillRect(3, 4, 10, 4);
+    stumpCtx.fillRect(1, 3, 14, 5);   // top surface
     stumpCtx.fillStyle = '#553300';
     // rings
-    stumpCtx.fillRect(6, 5, 4, 1);
+    stumpCtx.fillRect(4, 4, 8, 1);
+    stumpCtx.fillRect(3, 5, 10, 1);
     stumpCtx.fillRect(5, 6, 6, 1);
+    // bark edges
+    stumpCtx.fillStyle = '#553311';
+    stumpCtx.fillRect(0, 6, 1, 8);
+    stumpCtx.fillRect(15, 6, 1, 8);
     this.scene.textures.addCanvas('stump', stumpCtx.canvas);
 
-    // Rock
+    // Rock (larger to better fill the tile)
     const rockCtx = this.createCanvas(TILE_SIZE, TILE_SIZE);
+    rockCtx.fillStyle = '#777777';
+    rockCtx.fillRect(1, 5, 14, 10);   // base
     rockCtx.fillStyle = '#888888';
-    rockCtx.fillRect(3, 6, 10, 8);
+    rockCtx.fillRect(2, 3, 12, 8);    // main body
     rockCtx.fillStyle = '#999999';
-    rockCtx.fillRect(4, 4, 8, 4);
+    rockCtx.fillRect(3, 2, 10, 5);    // top highlight
     rockCtx.fillStyle = '#aaaaaa';
-    rockCtx.fillRect(5, 5, 3, 2);
+    rockCtx.fillRect(4, 3, 4, 3);     // light spot
+    rockCtx.fillStyle = '#666666';
+    rockCtx.fillRect(1, 12, 14, 2);   // shadow bottom
     this.scene.textures.addCanvas('rock', rockCtx.canvas);
 
     // House (2x2 tiles)
@@ -404,6 +415,191 @@ export class AssetGenerator {
     wormCtx.fillStyle = '#cc8866';
     ctx_wave(wormCtx, 7, 3, 2, 6);
     this.scene.textures.addCanvas('worm_spot', wormCtx.canvas);
+  }
+
+  private generateFarmingAssets(): void {
+    // ── Crop growth stage sprites ────────────────────────────
+    const cropTypes: [string, number][] = [
+      ['parsnip', CROP_COLORS.parsnip],
+      ['potato', CROP_COLORS.potato],
+      ['tomato', CROP_COLORS.tomato],
+      ['pumpkin', CROP_COLORS.pumpkin],
+    ];
+
+    // Growth stages per crop (stages 0..N where final stage = mature)
+    const stageCount: Record<string, number> = {
+      parsnip: 5,  // 0,1,2,3,4 (4 = grown)
+      potato: 6,
+      tomato: 6,
+      pumpkin: 7,
+    };
+
+    for (const [cropName, cropColor] of cropTypes) {
+      const stages = stageCount[cropName] ?? 5;
+      for (let stage = 0; stage < stages; stage++) {
+        const ctx = this.createCanvas(TILE_SIZE, TILE_SIZE);
+        this.drawCropStage(ctx, cropName, cropColor, stage, stages - 1);
+        this.scene.textures.addCanvas(`crop_${cropName}_${stage}`, ctx.canvas);
+      }
+    }
+
+    // Withered crop (shared texture)
+    const withCtx = this.createCanvas(TILE_SIZE, TILE_SIZE);
+    withCtx.fillStyle = '#554433';
+    withCtx.fillRect(6, 10, 2, 6);
+    withCtx.fillRect(9, 8, 2, 8);
+    withCtx.fillStyle = '#443322';
+    withCtx.fillRect(4, 8, 3, 2);
+    withCtx.fillRect(10, 6, 3, 2);
+    this.scene.textures.addCanvas('crop_withered', withCtx.canvas);
+
+    // ── Seed packet icons ────────────────────────────────────
+    for (const [cropName, cropColor] of cropTypes) {
+      const ctx = this.createCanvas(TILE_SIZE, TILE_SIZE);
+      // Packet background
+      ctx.fillStyle = '#c4a46c';
+      ctx.fillRect(3, 2, 10, 12);
+      ctx.fillStyle = '#aa8844';
+      ctx.fillRect(3, 2, 10, 3);
+      // Colored dot representing the seed type
+      ctx.fillStyle = this.colorToCSS(cropColor);
+      ctx.fillRect(6, 7, 4, 4);
+      // Border
+      ctx.strokeStyle = '#664400';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(3, 2, 10, 12);
+      this.scene.textures.addCanvas(`icon_seed_${cropName}`, ctx.canvas);
+    }
+
+    // ── Harvested crop icons (for inventory) ─────────────────
+    // Parsnip: orange root
+    this.generateCropIcon('parsnip', CROP_COLORS.parsnip, (ctx) => {
+      ctx.fillRect(5, 3, 6, 10);
+      ctx.fillRect(6, 13, 4, 2);
+      ctx.fillStyle = '#44aa44';
+      ctx.fillRect(6, 1, 4, 3);
+    });
+
+    // Potato: brown oval
+    this.generateCropIcon('potato', CROP_COLORS.potato, (ctx) => {
+      ctx.fillRect(3, 5, 10, 8);
+      ctx.fillRect(4, 4, 8, 10);
+      ctx.fillStyle = '#8b6914';
+      ctx.fillRect(6, 7, 2, 2);
+      ctx.fillRect(9, 9, 1, 1);
+    });
+
+    // Tomato: red circle
+    this.generateCropIcon('tomato', CROP_COLORS.tomato, (ctx) => {
+      ctx.fillRect(4, 4, 8, 8);
+      ctx.fillRect(3, 5, 10, 6);
+      ctx.fillStyle = '#44aa44';
+      ctx.fillRect(6, 2, 4, 3);
+    });
+
+    // Pumpkin: orange gourd
+    this.generateCropIcon('pumpkin', CROP_COLORS.pumpkin, (ctx) => {
+      ctx.fillRect(3, 5, 10, 8);
+      ctx.fillRect(2, 6, 12, 6);
+      ctx.fillStyle = '#44aa44';
+      ctx.fillRect(7, 2, 2, 4);
+      // Segments
+      ctx.fillStyle = '#dd7700';
+      ctx.fillRect(7, 6, 1, 6);
+    });
+
+    // ── Material icons ───────────────────────────────────────
+    // Wood
+    const woodCtx = this.createCanvas(TILE_SIZE, TILE_SIZE);
+    woodCtx.fillStyle = '#8b6914';
+    woodCtx.fillRect(3, 4, 10, 8);
+    woodCtx.fillStyle = '#aa8844';
+    woodCtx.fillRect(4, 5, 8, 6);
+    woodCtx.fillStyle = '#664400';
+    woodCtx.fillRect(7, 5, 1, 6);
+    this.scene.textures.addCanvas('icon_wood', woodCtx.canvas);
+
+    // Stone
+    const stoneCtx = this.createCanvas(TILE_SIZE, TILE_SIZE);
+    stoneCtx.fillStyle = '#888888';
+    stoneCtx.fillRect(3, 5, 10, 8);
+    stoneCtx.fillStyle = '#aaaaaa';
+    stoneCtx.fillRect(5, 4, 6, 4);
+    stoneCtx.fillStyle = '#777777';
+    stoneCtx.fillRect(4, 7, 3, 2);
+    this.scene.textures.addCanvas('icon_stone', stoneCtx.canvas);
+  }
+
+  private drawCropStage(
+    ctx: CanvasRenderingContext2D,
+    _cropName: string,
+    cropColor: number,
+    stage: number,
+    maxStage: number
+  ): void {
+    const green = '#44aa44';
+    const darkGreen = '#338833';
+
+    if (stage === 0) {
+      // Seedling: tiny dots
+      ctx.fillStyle = green;
+      ctx.fillRect(6, 12, 2, 2);
+      ctx.fillRect(9, 13, 2, 1);
+    } else if (stage < maxStage) {
+      // Growing: progressively taller green stems with small leaves
+      const progress = stage / maxStage;
+      const height = Math.floor(4 + progress * 8);
+      const stemY = 14 - height;
+
+      // Stem
+      ctx.fillStyle = darkGreen;
+      ctx.fillRect(7, stemY, 2, height + 2);
+
+      // Leaves grow with stage
+      ctx.fillStyle = green;
+      if (stage >= 1) {
+        ctx.fillRect(5, stemY + 2, 2, 2);
+        ctx.fillRect(9, stemY + 4, 2, 2);
+      }
+      if (stage >= 2) {
+        ctx.fillRect(4, stemY + 1, 3, 3);
+        ctx.fillRect(9, stemY + 3, 3, 3);
+      }
+      if (stage >= 3) {
+        ctx.fillRect(3, stemY, 4, 3);
+        ctx.fillRect(9, stemY + 2, 4, 3);
+        // Small bud
+        ctx.fillStyle = this.colorToCSS(this.lightenColor(cropColor, 0.2));
+        ctx.fillRect(6, stemY - 1, 4, 2);
+      }
+    } else {
+      // Fully grown: tall plant with colored produce
+      const stemY = 3;
+      ctx.fillStyle = darkGreen;
+      ctx.fillRect(7, stemY, 2, 13);
+
+      // Leaves
+      ctx.fillStyle = green;
+      ctx.fillRect(3, stemY + 2, 4, 3);
+      ctx.fillRect(9, stemY + 4, 4, 3);
+      ctx.fillRect(4, stemY + 6, 3, 2);
+      ctx.fillRect(9, stemY + 1, 3, 2);
+
+      // Produce (colored)
+      ctx.fillStyle = this.colorToCSS(cropColor);
+      ctx.fillRect(5, stemY - 1, 6, 4);
+      ctx.fillRect(6, stemY - 2, 4, 2);
+    }
+  }
+
+  private generateCropIcon(
+    cropName: string, color: number,
+    drawFn: (ctx: CanvasRenderingContext2D) => void
+  ): void {
+    const ctx = this.createCanvas(TILE_SIZE, TILE_SIZE);
+    ctx.fillStyle = this.colorToCSS(color);
+    drawFn(ctx);
+    this.scene.textures.addCanvas(`icon_crop_${cropName}`, ctx.canvas);
   }
 
   generateMonsterPlaceholders(): void {
