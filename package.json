@@ -1,0 +1,23 @@
+{
+  "name": "farm-monsters",
+  "version": "0.1.0",
+  "description": "A cozy farm simulation meets monster taming RPG - Stardew Valley meets Pokemon",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "author": "Garrett Emrick <emrickgarrett@github.com>",
+  "license": "MIT",
+  "dependencies": {
+    "phaser": "^3.87.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.0"
+  }
+}
